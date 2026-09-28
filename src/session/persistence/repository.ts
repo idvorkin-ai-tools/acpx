@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { canonicalAgentCommand } from "../../acp/builtin-command-migration.js";
 import { SessionNotFoundError, SessionResolutionError } from "../../errors.js";
 import { incrementPerfCounter, measurePerf } from "../../perf-metrics.js";
 import { assertPersistedKeyPolicy } from "../../persisted-key-policy.js";
@@ -213,9 +214,10 @@ export async function listSessionsForAgent(agentCommand: string): Promise<Sessio
 }
 
 async function collectSessionRecords(agentCommand?: string): Promise<SessionRecord[]> {
+  const scope = agentCommand === undefined ? undefined : canonicalAgentCommand(agentCommand);
   const records: SessionRecord[] = [];
   for await (const record of sessionRecords()) {
-    if (agentCommand === undefined || record.agentCommand === agentCommand) {
+    if (scope === undefined || record.agentCommand === scope) {
       records.push(record);
     }
   }
@@ -225,11 +227,12 @@ async function collectSessionRecords(agentCommand?: string): Promise<SessionReco
 export async function findSession(options: FindSessionOptions): Promise<SessionRecord | undefined> {
   const normalizedCwd = absolutePath(options.cwd);
   const normalizedName = normalizeName(options.name);
+  const agentCommand = canonicalAgentCommand(options.agentCommand);
   let match: SessionRecord | undefined;
   for await (const record of sessionRecords(options.readOnly)) {
     if (
       record.cwd === normalizedCwd &&
-      matchesSession(record, options.agentCommand, normalizedName, options.includeClosed) &&
+      matchesSession(record, agentCommand, normalizedName, options.includeClosed) &&
       isNewer(record, match)
     ) {
       match = record;
@@ -242,6 +245,7 @@ export async function findSessionByDirectoryWalk(
   options: FindSessionByDirectoryWalkOptions,
 ): Promise<SessionRecord | undefined> {
   const normalizedName = normalizeName(options.name);
+  const agentCommand = canonicalAgentCommand(options.agentCommand);
   const directories = walkDirectories(options);
   let match: SessionRecord | undefined;
   let distance = Infinity;
@@ -249,7 +253,7 @@ export async function findSessionByDirectoryWalk(
     const candidateDistance = directories.get(record.cwd);
     if (
       candidateDistance !== undefined &&
-      matchesSession(record, options.agentCommand, normalizedName) &&
+      matchesSession(record, agentCommand, normalizedName) &&
       (candidateDistance < distance || (candidateDistance === distance && isNewer(record, match)))
     ) {
       match = record;
@@ -370,8 +374,9 @@ async function loadPrunableRecords(
 ): Promise<SessionRecord[]> {
   const records: SessionRecord[] = [];
   const cutoffIso = cutoff?.toISOString();
+  const scope = agentCommand === undefined ? undefined : canonicalAgentCommand(agentCommand);
   for await (const record of sessionRecords()) {
-    if (isPruneCandidate(record, agentCommand) && isBeforeCutoff(record, cutoffIso)) {
+    if (isPruneCandidate(record, scope) && isBeforeCutoff(record, cutoffIso)) {
       records.push(record);
     }
   }
