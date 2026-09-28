@@ -45,13 +45,22 @@ async function* sessionRecords(readOnly = false): AsyncGenerator<SessionRecord> 
   yield* scanSessionRecords(sessionBaseDir());
 }
 
+/**
+ * Commands a scoped query matches: the query itself, plus the current built-in
+ * command when the query is an earlier built-in default (records under it are
+ * migrated on read unless they carry a custom launcher).
+ */
+function agentScope(agentCommand: string): ReadonlySet<string> {
+  return new Set([agentCommand, canonicalAgentCommand(agentCommand)]);
+}
+
 function matchesSession(
   session: SessionRecord,
-  agentCommand: string,
+  scope: ReadonlySet<string>,
   normalizedName: string | undefined,
   includeClosed = false,
 ): boolean {
-  if (session.agentCommand !== agentCommand) {
+  if (!scope.has(session.agentCommand)) {
     return false;
   }
   if (!includeClosed && session.closed) {
@@ -214,10 +223,10 @@ export async function listSessionsForAgent(agentCommand: string): Promise<Sessio
 }
 
 async function collectSessionRecords(agentCommand?: string): Promise<SessionRecord[]> {
-  const scope = agentCommand === undefined ? undefined : canonicalAgentCommand(agentCommand);
+  const scope = agentCommand === undefined ? undefined : agentScope(agentCommand);
   const records: SessionRecord[] = [];
   for await (const record of sessionRecords()) {
-    if (scope === undefined || record.agentCommand === scope) {
+    if (scope === undefined || scope.has(record.agentCommand)) {
       records.push(record);
     }
   }
@@ -227,12 +236,12 @@ async function collectSessionRecords(agentCommand?: string): Promise<SessionReco
 export async function findSession(options: FindSessionOptions): Promise<SessionRecord | undefined> {
   const normalizedCwd = absolutePath(options.cwd);
   const normalizedName = normalizeName(options.name);
-  const agentCommand = canonicalAgentCommand(options.agentCommand);
+  const scope = agentScope(options.agentCommand);
   let match: SessionRecord | undefined;
   for await (const record of sessionRecords(options.readOnly)) {
     if (
       record.cwd === normalizedCwd &&
-      matchesSession(record, agentCommand, normalizedName, options.includeClosed) &&
+      matchesSession(record, scope, normalizedName, options.includeClosed) &&
       isNewer(record, match)
     ) {
       match = record;
@@ -245,7 +254,7 @@ export async function findSessionByDirectoryWalk(
   options: FindSessionByDirectoryWalkOptions,
 ): Promise<SessionRecord | undefined> {
   const normalizedName = normalizeName(options.name);
-  const agentCommand = canonicalAgentCommand(options.agentCommand);
+  const scope = agentScope(options.agentCommand);
   const directories = walkDirectories(options);
   let match: SessionRecord | undefined;
   let distance = Infinity;
@@ -253,7 +262,7 @@ export async function findSessionByDirectoryWalk(
     const candidateDistance = directories.get(record.cwd);
     if (
       candidateDistance !== undefined &&
-      matchesSession(record, agentCommand, normalizedName) &&
+      matchesSession(record, scope, normalizedName) &&
       (candidateDistance < distance || (candidateDistance === distance && isNewer(record, match)))
     ) {
       match = record;
@@ -363,9 +372,9 @@ export async function pruneSessions(options: PruneOptions = {}): Promise<PruneRe
 
 function isPruneCandidate(
   record: Pick<SessionRecord, "closed" | "agentCommand">,
-  agentCommand: string | undefined,
+  scope: ReadonlySet<string> | undefined,
 ): boolean {
-  return record.closed === true && (!agentCommand || record.agentCommand === agentCommand);
+  return record.closed === true && (!scope || scope.has(record.agentCommand));
 }
 
 async function loadPrunableRecords(
@@ -374,7 +383,7 @@ async function loadPrunableRecords(
 ): Promise<SessionRecord[]> {
   const records: SessionRecord[] = [];
   const cutoffIso = cutoff?.toISOString();
-  const scope = agentCommand === undefined ? undefined : canonicalAgentCommand(agentCommand);
+  const scope = agentCommand === undefined ? undefined : agentScope(agentCommand);
   for await (const record of sessionRecords()) {
     if (isPruneCandidate(record, scope) && isBeforeCutoff(record, cutoffIso)) {
       records.push(record);

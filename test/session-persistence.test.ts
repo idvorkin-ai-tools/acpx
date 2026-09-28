@@ -246,6 +246,34 @@ test("agent-scoped lookup finds sessions saved under the previous Claude command
   });
 });
 
+test("exact-command lookup still finds custom launchers saved under an earlier built-in command", async () => {
+  await withTempHome(async (homeDir) => {
+    const session = await loadSessionModule();
+    const cwd = path.join(homeDir, "workspace");
+    await fs.mkdir(cwd, { recursive: true });
+    const customArgv = ["/opt/claude-agent-acp/bin/claude-agent-acp", "--debug"];
+    await writeSessionRecord(
+      homeDir,
+      makeSessionRecord({
+        acpxRecordId: "custom-launcher",
+        acpSessionId: "custom-launcher",
+        agentCommand: PREVIOUS_CLAUDE_COMMAND,
+        agentArgv: customArgv,
+        cwd,
+      }),
+    );
+
+    const found = await session.findSession({ agentCommand: PREVIOUS_CLAUDE_COMMAND, cwd });
+    assert.equal(found?.acpxRecordId, "custom-launcher");
+    assert.equal(found?.agentCommand, PREVIOUS_CLAUDE_COMMAND);
+    assert.deepEqual(found?.agentArgv, customArgv);
+    assert.equal(
+      await session.findSession({ agentCommand: AGENT_REGISTRY.claude, cwd }),
+      undefined,
+    );
+  });
+});
+
 test("agent-scoped lookup prefers the most recently used of migrated and current records", async () => {
   await withTempHome(async (homeDir) => {
     const session = await loadSessionModule();
