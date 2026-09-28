@@ -5,7 +5,7 @@ import { splitCommandLine } from "./client-process.js";
 // keep the command they were created under, so a range change in
 // agent-registry.ts must add the previous command here or those sessions drop
 // out of agent-scoped lookup.
-const LEGACY_AGENT_COMMANDS: Record<string, string[]> = {
+export const LEGACY_AGENT_COMMANDS: Readonly<Record<string, readonly string[]>> = {
   pi: ["npx pi-acp", "npx pi-acp@^0.0.22", "npx pi-acp@^0.0.26", "npx pi-acp@^0.0.31"],
   codex: [
     "npx @zed-industries/codex-acp",

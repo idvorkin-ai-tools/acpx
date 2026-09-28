@@ -4,7 +4,8 @@ import { once } from "node:events";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { normalizeAgentCommandInput } from "../src/acp/client-process.js";
+import { LEGACY_AGENT_COMMANDS } from "../src/acp/builtin-command-migration.js";
+import { normalizeAgentCommandInput, splitCommandLine } from "../src/acp/client-process.js";
 import { AGENT_ARGV_REGISTRY, AGENT_REGISTRY } from "../src/agent-registry.js";
 import { withTimeout } from "../src/async-control.js";
 import {
@@ -243,6 +244,41 @@ test("agent-scoped lookup finds sessions saved under the previous Claude command
       ["closed-before-upgrade"],
     );
     assert.equal(await session.findSession({ agentCommand: AGENT_REGISTRY.codex, cwd }), undefined);
+  });
+});
+
+test("every earlier built-in default stays in its agent's scope after migration", async () => {
+  await withTempHome(async (homeDir) => {
+    const session = await loadSessionModule();
+    const entries = Object.entries(LEGACY_AGENT_COMMANDS).flatMap(([name, commands]) =>
+      commands.map((agentCommand, index) => ({ name, agentCommand, index })),
+    );
+    assert.ok(entries.length > 30);
+    for (const { name, agentCommand, index } of entries) {
+      const cwd = path.join(homeDir, name, String(index));
+      await fs.mkdir(cwd, { recursive: true });
+      const { command, args } = splitCommandLine(agentCommand);
+      await writeSessionRecord(
+        homeDir,
+        makeSessionRecord({
+          acpxRecordId: `${name}-${index}`,
+          acpSessionId: `${name}-${index}`,
+          agentCommand,
+          agentArgv: [command, ...args],
+          cwd,
+        }),
+      );
+    }
+
+    for (const { name, agentCommand, index } of entries) {
+      const cwd = path.join(homeDir, name, String(index));
+      for (const query of [AGENT_REGISTRY[name], agentCommand]) {
+        const found = await session.findSession({ agentCommand: query, cwd });
+        assert.equal(found?.acpxRecordId, `${name}-${index}`, `${agentCommand} via ${query}`);
+        assert.equal(found?.agentCommand, AGENT_REGISTRY[name], agentCommand);
+        assert.deepEqual(found?.agentArgv, AGENT_ARGV_REGISTRY[name], agentCommand);
+      }
+    }
   });
 });
 
